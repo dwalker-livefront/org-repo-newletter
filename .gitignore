@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.log
+.env
+newsletter-*.md
+.DS_Store
+config.json
+
