@@ -1,6 +1,6 @@
-import { subDays } from 'date-fns';
-import type { AppConfig } from './config.js';
-import type { GitHubMCPClient } from './mcp-client.js';
+import { subDays } from "date-fns";
+import type { AppConfig } from "./config.js";
+import type { GitHubMCPClient } from "./mcp-client.js";
 
 export interface RepoActivity {
   owner: string;
@@ -19,37 +19,142 @@ export function isWithinTimeframe(
   return prDate >= startDate && prDate <= endDate;
 }
 
+/**
+ * Extract all unique repos from the teams configuration
+ */
+export function extractReposFromConfig(
+  config: AppConfig
+): Array<{ owner: string; repo: string }> {
+  const repos: Array<{ owner: string; repo: string }> = [];
+  const seenRepos = new Set<string>();
+
+  for (const teamConfig of Object.values(config.teams)) {
+    // Add repos from explicit repo list
+    if (teamConfig.repos) {
+      for (const repoName of teamConfig.repos) {
+        const key = `${config.github.organization}/${repoName}`;
+        if (!seenRepos.has(key)) {
+          seenRepos.add(key);
+          repos.push({
+            owner: config.github.organization,
+            repo: repoName,
+          });
+        }
+      }
+    }
+  }
+
+  return repos;
+}
+
+/**
+ * Check if a repository has PRs closed/merged within the timeframe
+ */
+export async function checkRepoHasPRsInTimeframe(
+  mcpClient: GitHubMCPClient,
+  owner: string,
+  repo: string,
+  startDate: Date,
+  endDate: Date
+): Promise<{ hasActivity: boolean; prCount: number }> {
+  try {
+    // Use MCP to list pull requests with state=closed
+    const result = await mcpClient.listPullRequests({
+      owner,
+      repo,
+      state: "closed",
+      perPage: 100, // Check up to 100 PRs
+      page: 1,
+    });
+
+    // Parse the result - MCP returns content array
+    let prs: any[] = [];
+    if (result.content && result.content.length > 0) {
+      const contentText = result.content
+        .map((item: any) => item.text || JSON.stringify(item))
+        .join("\n");
+
+      try {
+        // Try to parse as JSON if it's structured
+        const parsed = JSON.parse(contentText);
+        prs = Array.isArray(parsed)
+          ? parsed
+          : parsed.data || parsed.items || [];
+      } catch {
+        // If not JSON, try to extract from text
+        // The MCP server might return structured data differently
+        prs = [];
+      }
+    }
+
+    // Filter PRs by merged_at or closed_at date within timeframe
+    let prCount = 0;
+    for (const pr of prs) {
+      const mergedAt = pr.merged_at || pr.mergedAt;
+      const closedAt = pr.closed_at || pr.closedAt;
+      const prDate = mergedAt || closedAt;
+
+      if (isWithinTimeframe(prDate, startDate, endDate)) {
+        prCount++;
+      }
+    }
+
+    return {
+      hasActivity: prCount > 0,
+      prCount,
+    };
+  } catch (error) {
+    console.warn(
+      `Error checking PRs for ${owner}/${repo}:`,
+      error instanceof Error ? error.message : String(error)
+    );
+    // Return false on error - we'll skip this repo
+    return { hasActivity: false, prCount: 0 };
+  }
+}
+
+/**
+ * Discover repositories from config that have PR activity in the timeframe
+ */
 export async function discoverReposWithActivity(
   config: AppConfig,
   mcpClient: GitHubMCPClient,
-  organization: string
+  startDate: Date,
+  endDate: Date
 ): Promise<RepoActivity[]> {
-  const endDate = new Date();
-  const startDate = subDays(endDate, config.github.timeframeDays);
-  
   const activeRepos: RepoActivity[] = [];
 
-  try {
-    // Get list of pull requests for the organization
-    // Note: MCP may not have a direct "list all org repos" endpoint
-    // This is a simplified approach - you may need to:
-    // 1. Use GitHub API directly to list org repos, OR
-    // 2. Have a predefined list of repos, OR
-    // 3. Use MCP to search for repos
-    
-    // For now, we'll try to get PRs by attempting common repo patterns
-    // or you can specify repos in config
-    
-    // Example: Try to get PRs for repos that might exist
-    // In production, you'd want to list all repos in the org first
-    
-    // Placeholder: This would need actual implementation based on available MCP tools
-    // You might need to use GitHub API directly or have repos specified in config
-    
-  } catch (error) {
-    console.warn('Error discovering repos:', error instanceof Error ? error.message : String(error));
+  // Extract all repos from config
+  const reposFromConfig = extractReposFromConfig(config);
+
+  console.log(
+    `  Checking ${reposFromConfig.length} repositories from config...`
+  );
+
+  // Check each repo for PR activity
+  for (const { owner, repo } of reposFromConfig) {
+    const { hasActivity, prCount } = await checkRepoHasPRsInTimeframe(
+      mcpClient,
+      owner,
+      repo,
+      startDate,
+      endDate
+    );
+
+    if (hasActivity) {
+      activeRepos.push({
+        owner,
+        repo,
+        prCount,
+      });
+      console.log(`  ✓ ${owner}/${repo} has ${prCount} PR(s) in timeframe`);
+    } else {
+      console.log(`  - ${owner}/${repo} has no PRs in timeframe`);
+    }
+
+    // Small delay to avoid rate limiting
+    await new Promise((resolve) => setTimeout(resolve, 200));
   }
-  
+
   return activeRepos;
 }
-

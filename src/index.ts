@@ -10,6 +10,7 @@ import {
   generateNewsletter,
   writeNewsletterToFile,
 } from "./newsletter-generator.js";
+import { discoverReposWithActivity } from "./repo-discovery.js";
 import type { RepoSummary } from "./openai-agent.js";
 
 async function main() {
@@ -42,16 +43,28 @@ async function main() {
     console.log("✓ Connected to GitHub MCP\n");
 
     // Step 3: Discover repositories with activity
-    // Note: This is a simplified version - in production, you'd need to:
-    // 1. List all repos in the org (may require GitHub API directly or MCP extension)
-    // 2. Check each repo for closed/merged PRs in timeframe
-    // For now, we'll assume repos are provided or discovered via MCP
-
     console.log("Discovering repositories with activity...");
-    // TODO: Implement full repo discovery
-    // For POC, you might want to manually specify repos or use a different discovery method
+    const reposWithActivity = await discoverReposWithActivity(
+      config,
+      mcpClient,
+      startDate,
+      endDate
+    );
+
+    if (reposWithActivity.length === 0) {
+      console.log(
+        "⚠ No repositories with PR activity found in the specified timeframe."
+      );
+      console.log("\nThis could mean:");
+      console.log("1. No PRs were merged/closed in the timeframe");
+      console.log("2. The repos specified in config.json don't exist or aren't accessible");
+      console.log("3. Check your GitHub token permissions");
+      await mcpClient.disconnect();
+      process.exit(0);
+    }
+
     console.log(
-      "⚠ Repo discovery not fully implemented - you may need to specify repos manually\n"
+      `✓ Found ${reposWithActivity.length} repository/repositories with activity\n`
     );
 
     // Step 4: Summarize each repository
@@ -59,20 +72,7 @@ async function main() {
     const openaiAgent = new OpenAIAgent(config, mcpClient);
     const repoSummaries: RepoSummary[] = [];
 
-    // Example: If you have a list of repos, process them
-    // For now, this is a placeholder - you'll need to implement repo discovery
-    // or provide repos manually
-
-    // Example usage (uncomment and modify as needed):
-
-    const reposToProcess = [
-      {
-        owner: config.github.organization,
-        repo: "mobile-coaching-gateway-api",
-      },
-    ];
-
-    for (const { owner, repo } of reposToProcess) {
+    for (const { owner, repo } of reposWithActivity) {
       try {
         console.log(`  Processing ${owner}/${repo}...`);
         const summary = await openaiAgent.summarizeRepo(
