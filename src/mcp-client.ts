@@ -211,6 +211,15 @@ export class GitHubMCPClient {
       return { actualToolName: "list_commits", adjustedArgs };
     }
 
+    // Try common variations for listing org repos
+    if (
+      openAIToolName === "list_org_repositories" ||
+      openAIToolName.includes("org_repo")
+    ) {
+      // Try different possible tool names
+      return { actualToolName: "list_org_repositories", adjustedArgs };
+    }
+
     // Default: try the name as-is, or remove mcp_GitHub_ prefix
     const cleanedName = openAIToolName.replace(/^mcp_GitHub_/, "");
     return { actualToolName: cleanedName, adjustedArgs };
@@ -274,6 +283,18 @@ export class GitHubMCPClient {
     page?: number;
   }): Promise<any> {
     return this.callTool("list_commits", params);
+  }
+
+  async listOrgRepositories(params: {
+    org: string;
+    type?: "all" | "public" | "private" | "forks" | "sources" | "member";
+    sort?: "created" | "updated" | "pushed" | "full_name";
+    direction?: "asc" | "desc";
+    perPage?: number;
+    page?: number;
+  }): Promise<any> {
+    // Try common tool names for listing org repos
+    return this.callTool("list_org_repositories", params);
   }
 
   async disconnect(): Promise<void> {

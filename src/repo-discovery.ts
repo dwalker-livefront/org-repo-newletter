@@ -20,11 +20,95 @@ export function isWithinTimeframe(
 }
 
 /**
- * Extract all unique repos from the teams configuration
+ * List all repositories in an organization that match given prefixes
  */
-export function extractReposFromConfig(
-  config: AppConfig
-): Array<{ owner: string; repo: string }> {
+async function findReposByPrefixes(
+  mcpClient: GitHubMCPClient,
+  organization: string,
+  prefixes: string[]
+): Promise<Array<{ owner: string; repo: string }>> {
+  const matchingRepos: Array<{ owner: string; repo: string }> = [];
+
+  try {
+    // List all repositories in the organization
+    // Paginate through all repos
+    let page = 1;
+    const perPage = 100;
+    let hasMore = true;
+
+    while (hasMore) {
+      const result = await mcpClient.listOrgRepositories({
+        org: organization,
+        type: "all",
+        perPage,
+        page,
+      });
+
+      // Parse the result
+      let repos: any[] = [];
+      if (result.content && result.content.length > 0) {
+        const contentText = result.content
+          .map((item: any) => item.text || JSON.stringify(item))
+          .join("\n");
+
+        try {
+          const parsed = JSON.parse(contentText);
+          repos = Array.isArray(parsed)
+            ? parsed
+            : parsed.data || parsed.items || parsed.repositories || [];
+        } catch {
+          // If parsing fails, try to extract from text
+          repos = [];
+        }
+      }
+
+      if (repos.length === 0) {
+        hasMore = false;
+        break;
+      }
+
+      // Filter repos by prefixes
+      for (const repo of repos) {
+        const repoName = repo.name || repo.full_name?.split("/")[1] || "";
+        if (repoName) {
+          // Check if repo name matches any prefix
+          for (const prefix of prefixes) {
+            if (repoName.startsWith(prefix)) {
+              matchingRepos.push({
+                owner: organization,
+                repo: repoName,
+              });
+              break; // Only add once even if multiple prefixes match
+            }
+          }
+        }
+      }
+
+      // Check if there are more pages
+      hasMore = repos.length === perPage;
+      page++;
+
+      // Small delay to avoid rate limiting
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+  } catch (error) {
+    console.warn(
+      `Error listing repos for org ${organization}:`,
+      error instanceof Error ? error.message : String(error)
+    );
+  }
+
+  return matchingRepos;
+}
+
+/**
+ * Extract all unique repos from the teams configuration
+ * This includes both explicit repos and repos matching prefix patterns
+ */
+export async function extractReposFromConfig(
+  config: AppConfig,
+  mcpClient: GitHubMCPClient
+): Promise<Array<{ owner: string; repo: string }>> {
   const repos: Array<{ owner: string; repo: string }> = [];
   const seenRepos = new Set<string>();
 
@@ -39,6 +123,28 @@ export function extractReposFromConfig(
             owner: config.github.organization,
             repo: repoName,
           });
+        }
+      }
+    }
+
+    // Search repos based on prefix patterns
+    if (teamConfig.prefixes && teamConfig.prefixes.length > 0) {
+      console.log(
+        `  Searching for repos matching prefixes: ${teamConfig.prefixes.join(
+          ", "
+        )}`
+      );
+      const prefixRepos = await findReposByPrefixes(
+        mcpClient,
+        config.github.organization,
+        teamConfig.prefixes
+      );
+
+      for (const { owner, repo } of prefixRepos) {
+        const key = `${owner}/${repo}`;
+        if (!seenRepos.has(key)) {
+          seenRepos.add(key);
+          repos.push({ owner, repo });
         }
       }
     }
@@ -124,8 +230,9 @@ export async function discoverReposWithActivity(
 ): Promise<RepoActivity[]> {
   const activeRepos: RepoActivity[] = [];
 
-  // Extract all repos from config
-  const reposFromConfig = extractReposFromConfig(config);
+  // Extract all repos from config (including prefix-based discovery)
+  console.log("  Extracting repositories from config...");
+  const reposFromConfig = await extractReposFromConfig(config, mcpClient);
 
   console.log(
     `  Checking ${reposFromConfig.length} repositories from config...`
