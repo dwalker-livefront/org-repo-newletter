@@ -4,5 +4,4 @@ dist/
 .env
 newsletter-*.md
 .DS_Store
-config.json
 

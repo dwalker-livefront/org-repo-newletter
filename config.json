@@ -1,0 +1,21 @@
+{
+  "github": {
+    "organization": "Life-Time-Inc",
+    "timeframeDays": 7,
+    "token": "env:GITHUB_TOKEN"
+  },
+  "teams": {
+    "Coaching Team": {
+      "prefixes": [
+        "coaching-achievements"
+      ],
+      "repos": [
+        "mobile-coaching-gateway-api"
+      ]
+    }
+  },
+  "openai": {
+    "apiKey": "env:OPENAI_API_KEY",
+    "model": "gpt-4-turbo"
+  }
+}
