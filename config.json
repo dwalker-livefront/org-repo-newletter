@@ -7,7 +7,7 @@
   "teams": {
     "Coaching Team": {
       "prefixes": [
-        "coaching-achievements"
+        "coaching-"
       ],
       "repos": [
         "mobile-coaching-gateway-api"
