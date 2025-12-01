@@ -293,8 +293,39 @@ export class GitHubMCPClient {
     perPage?: number;
     page?: number;
   }): Promise<any> {
-    // Try common tool names for listing org repos
-    return this.callTool("list_org_repositories", params);
+    // Try different possible tool names for listing org repos
+    // GitHub MCP server might use different naming
+    const possibleToolNames = [
+      "list_org_repositories",
+      "list_repositories",
+      "search_repositories",
+      "org_repositories",
+    ];
+
+    for (const toolName of possibleToolNames) {
+      try {
+        const result = await this.callTool(toolName, params);
+        if (!result.isError) {
+          return result;
+        }
+      } catch (error) {
+        // Try next tool name
+        continue;
+      }
+    }
+
+    // If all fail, return error
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Could not find tool to list org repositories. Tried: ${possibleToolNames.join(
+            ", "
+          )}`,
+        },
+      ],
+      isError: true,
+    };
   }
 
   async disconnect(): Promise<void> {

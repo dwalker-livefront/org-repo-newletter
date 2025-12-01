@@ -28,68 +28,84 @@ async function findReposByPrefixes(
   prefixes: string[]
 ): Promise<Array<{ owner: string; repo: string }>> {
   const matchingRepos: Array<{ owner: string; repo: string }> = [];
+  const seenRepos = new Set<string>();
 
   try {
-    // List all repositories in the organization
-    // Paginate through all repos
-    let page = 1;
-    const perPage = 100;
-    let hasMore = true;
+    // Use search_repositories tool for each prefix
+    for (const prefix of prefixes) {
+      console.log(`  Searching for repos with prefix: ${prefix}`);
 
-    while (hasMore) {
-      const result = await mcpClient.listOrgRepositories({
-        org: organization,
-        type: "all",
-        perPage,
-        page,
-      });
+      // Paginate through search results
+      let page = 1;
+      const perPage = 100;
+      let hasMore = true;
 
-      // Parse the result
-      let repos: any[] = [];
-      if (result.content && result.content.length > 0) {
-        const contentText = result.content
-          .map((item: any) => item.text || JSON.stringify(item))
-          .join("\n");
+      while (hasMore) {
+        // Build query: org:{orgName} "{prefix}" in:name
+        const query = `org:${organization} "${prefix}" in:name`;
 
-        try {
-          const parsed = JSON.parse(contentText);
-          repos = Array.isArray(parsed)
-            ? parsed
-            : parsed.data || parsed.items || parsed.repositories || [];
-        } catch {
-          // If parsing fails, try to extract from text
-          repos = [];
+        const result = await mcpClient.callTool("search_repositories", {
+          query,
+          minimal_output: true,
+          perPage,
+          page,
+        });
+
+        // Check for errors
+        if (result.isError) {
+          console.warn(
+            `  Error searching repos with prefix ${prefix} (page ${page}):`,
+            result.content
+          );
+          hasMore = false;
+          break;
         }
-      }
 
-      if (repos.length === 0) {
-        hasMore = false;
-        break;
-      }
+        // Parse the result
+        let repos: any[] = [];
+        if (result.content && result.content.length > 0) {
+          const contentText = result.content
+            .map((item: any) => item.text || JSON.stringify(item))
+            .join("\n");
 
-      // Filter repos by prefixes
-      for (const repo of repos) {
-        const repoName = repo.name || repo.full_name?.split("/")[1] || "";
-        if (repoName) {
-          // Check if repo name matches any prefix
-          for (const prefix of prefixes) {
-            if (repoName.startsWith(prefix)) {
+          try {
+            const parsed = JSON.parse(contentText);
+            repos = Array.isArray(parsed)
+              ? parsed
+              : parsed.data || parsed.items || parsed.repositories || [];
+          } catch {
+            // If parsing fails, try to extract from text
+            repos = [];
+          }
+        }
+
+        if (repos.length === 0) {
+          hasMore = false;
+          break;
+        }
+
+        // Add matching repos (they should all match the prefix from the query)
+        for (const repo of repos) {
+          const repoName = repo.name || repo.full_name?.split("/")[1] || "";
+          if (repoName && repoName.startsWith(prefix)) {
+            const key = `${organization}/${repoName}`;
+            if (!seenRepos.has(key)) {
+              seenRepos.add(key);
               matchingRepos.push({
                 owner: organization,
                 repo: repoName,
               });
-              break; // Only add once even if multiple prefixes match
             }
           }
         }
+
+        // Check if there are more pages
+        hasMore = repos.length === perPage;
+        page++;
+
+        // Small delay to avoid rate limiting
+        await new Promise((resolve) => setTimeout(resolve, 200));
       }
-
-      // Check if there are more pages
-      hasMore = repos.length === perPage;
-      page++;
-
-      // Small delay to avoid rate limiting
-      await new Promise((resolve) => setTimeout(resolve, 200));
     }
   } catch (error) {
     console.warn(
